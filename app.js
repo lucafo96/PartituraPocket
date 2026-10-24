@@ -3,6 +3,9 @@ const toast = (s)=>{const e=$('#toast');e.textContent=s;e.classList.add('show');
 const clean=s=>(s||'Partitura').replace(/[\\/:*?"<>|]/g,'-').trim();
 const filename=f=>f.replace(/\.pdf$/i,'');
 let detectedParts=new Map(), pdfDoc=null, detecting=false;
+// Mantiene i documenti in memoria per poter aprire la condivisione iOS
+// direttamente nel gesto dell'utente (senza attendere IndexedDB).
+let libraryCache=new Map();
 let db, currentPdf=null, pages=[], scanItems=[], editing=-1, cropPoints=[], cropImage=null, currentBlob=null;
 const dbReady=new Promise((resolve,reject)=>{const req=indexedDB.open('partitura-pocket',1);req.onupgradeneeded=()=>{let db=req.result;if(!db.objectStoreNames.contains('scores'))db.createObjectStore('scores',{keyPath:'id'})};req.onsuccess=()=>{db=req.result;resolve(db)};req.onerror=()=>reject(req.error)});
 const transaction=(mode='readonly')=>db.transaction('scores',mode).objectStore('scores');
@@ -13,8 +16,40 @@ const id=()=>crypto.randomUUID?.()||('id-'+Date.now()+'-'+Math.random());
 function show(view){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('active',e.id===view));window.scrollTo(0,0)}
 function download(blob,name){const a=document.createElement('a'),u=URL.createObjectURL(blob);a.href=u;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function renderLibrary(){const all=(await getAll()).sort((a,b)=>b.created-a.created),q=$('#search').value.toLocaleLowerCase('it');const matched=all.filter(a=>a.title.toLocaleLowerCase('it').includes(q));$('#count').textContent=all.length;$('#library').innerHTML=matched.length?matched.map(a=>`<div class="item"><div class="docIcon">♬</div><div class="details"><b>${esc(a.title)}</b><small>${a.pages||'?'} ${a.pages===1?'pagina':'pagine'} · ${a.source==='scan'?'Scansione':a.source==='extract'?'Estratto PDF':'PDF importato'}</small></div><div class="itembuttons"><button class="open" data-op="open" data-id="${a.id}">Apri ↗</button>${a.source==='import'?`<button title="Estrai pagine" data-op="extract" data-id="${a.id}">Estrai</button>`:''}<button title="Rinomina" data-op="rename" data-id="${a.id}">✎</button><button class="delete" title="Elimina" data-op="delete" data-id="${a.id}">×</button></div></div>`).join(''):'<div class="empty">Nessuna partitura. Importa un PDF oppure scatta una foto per iniziare.</div>'}
-$('#library').addEventListener('click',async e=>{const b=e.target.closest('[data-op]');if(!b)return;const all=await getAll(),a=all.find(x=>x.id===b.dataset.id);if(!a)return; if(b.dataset.op==='rename'){const v=prompt('Nuovo titolo',a.title);if(v?.trim()){a.title=v.trim();await saveRecord(a);renderLibrary()}}else if(b.dataset.op==='extract'){await openExtraction(new File([a.blob],clean(a.title)+'.pdf',{type:'application/pdf'}))}else if(b.dataset.op==='delete'){if(confirm(`Eliminare definitivamente “${a.title}”?`)){await removeRecord(a.id);renderLibrary()}}else{const file=new File([a.blob],clean(a.title)+'.pdf',{type:'application/pdf'});if($('#openMode').value==='share'&&navigator.share&&navigator.canShare?.({files:[file]})){try{await navigator.share({files:[file],title:a.title})}catch(e){if(e.name!=='AbortError')download(a.blob,file.name)}}else{download(a.blob,file.name);if($('#openMode').value==='share')toast('PDF salvato. Aprilo da File e condividilo con Piascore.')}}});
+async function renderLibrary(){const all=(await getAll()).sort((a,b)=>b.created-a.created);libraryCache=new Map(all.map(a=>[a.id,a]));const q=$('#search').value.toLocaleLowerCase('it');const matched=all.filter(a=>a.title.toLocaleLowerCase('it').includes(q));$('#count').textContent=all.length;$('#library').innerHTML=matched.length?matched.map(a=>`<div class="item"><div class="docIcon">♬</div><div class="details"><b>${esc(a.title)}</b><small>${a.pages||'?'} ${a.pages===1?'pagina':'pagine'} · ${a.source==='scan'?'Scansione':a.source==='extract'?'Estratto PDF':'PDF importato'}</small></div><div class="itembuttons"><button class="open" data-op="open" data-id="${a.id}">Condividi ↗</button><button data-op="download" data-id="${a.id}" title="Esporta il PDF in File">Salva PDF</button>${a.source==='import'?`<button title="Estrai pagine" data-op="extract" data-id="${a.id}">Estrai</button>`:''}<button title="Rinomina" data-op="rename" data-id="${a.id}">✎</button><button class="delete" title="Elimina" data-op="delete" data-id="${a.id}">×</button></div></div>`).join(''):'<div class="empty">Nessuna partitura. Importa un PDF oppure scatta una foto per iniziare.</div>'}
+function shareRecord(a){
+  const file=new File([a.blob],clean(a.title)+'.pdf',{type:'application/pdf'});
+  const mode=$('#openMode').value;
+  if(mode==='download'){
+    download(a.blob,file.name);
+    toast('PDF esportato. Aprilo dall’app File e usa Condividi → Piascore.');
+    return;
+  }
+  // CRITICO: navigator.share deve essere chiamato nello stesso gesto del tap.
+  // Non inserire await o accessi IndexedDB prima di questa chiamata: iPadOS
+  // altrimenti può rifiutare di mostrare il foglio di condivisione.
+  if(typeof navigator.share==='function' && (!navigator.canShare || navigator.canShare({files:[file]}))){
+    try{
+      const sharing=navigator.share({files:[file],title:a.title});
+      sharing.catch(err=>{
+        if(err.name==='AbortError')return;
+        toast('Condivisione non riuscita: usa Salva PDF e aprilo dall’app File.');
+      });
+    }catch(err){toast('Condivisione non disponibile: premi Salva PDF.');}
+  }else{
+    toast('Questo browser non consente la condivisione PDF: premi Salva PDF.');
+  }
+}
+$('#library').addEventListener('click',async e=>{
+ const b=e.target.closest('[data-op]');if(!b)return;
+ // Il record è già in memoria dopo il rendering: nessun await per Apri.
+ const a=libraryCache.get(b.dataset.id);if(!a)return;
+ if(b.dataset.op==='open'){shareRecord(a);return}
+ if(b.dataset.op==='download'){download(a.blob,clean(a.title)+'.pdf');return}
+ if(b.dataset.op==='rename'){const v=prompt('Nuovo titolo',a.title);if(v?.trim()){a.title=v.trim();await saveRecord(a);renderLibrary()}}
+ else if(b.dataset.op==='extract'){await openExtraction(new File([a.blob],clean(a.title)+'.pdf',{type:'application/pdf'}))}
+ else if(b.dataset.op==='delete'){if(confirm(`Eliminare definitivamente “${a.title}”?`)){await removeRecord(a.id);renderLibrary()}}
+});
 $('#search').addEventListener('input',renderLibrary);document.querySelectorAll('.back').forEach(b=>b.onclick=()=>{show('home');renderLibrary()});$('#settingsBtn').onclick=()=>show('settingsView');$('#openMode').value=localStorage.getItem('openMode')||'share';$('#openMode').onchange=()=>localStorage.setItem('openMode',$('#openMode').value);
 $('#importBtn').onclick=()=>$('#pdfInput').click();$('#scanBtn').onclick=()=>{scanItems=[];$('#scanTitle').value='';renderScans();show('scanView')};$('#addCamera').onclick=()=>$('#cameraInput').click();$('#addPhotos').onclick=()=>$('#photoInput').click();
 async function library(name){if(name==='lib')return window.PDFLib;if(name==='zip')return window.JSZip;if(name==='pdfjs'){if(!window._pdfjs){try{window._pdfjs=await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');window._pdfjs.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs'}catch(err){throw new Error('Libreria anteprime PDF non disponibile. È necessaria una prima apertura con Internet.')}}return window._pdfjs}throw Error('Libreria PDF non caricata: verifica la connessione e ricarica la pagina.')}

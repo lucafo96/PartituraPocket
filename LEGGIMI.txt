@@ -1,30 +1,10 @@
-PARTITURA POCKET — versione 0.1.0
+Partitura Pocket 0.2.1
 
-CONTENUTO
-- index.html: interfaccia
-- style.css: stile
-- app.js: gestione PDF, archivio, scanner, esportazione
-- sw.js: cache PWA offline
-- manifest.webmanifest e icon.png: installazione su iPad
+Pubblica il CONTENUTO di questa cartella nella radice del repository GitHub Pages.
+Aggiorna la PWA sull’iPad chiudendola e riaprendola dopo la pubblicazione.
 
-AVVIO
-1) Carica tutti questi file, senza cambiare struttura, su un hosting HTTPS statico (es. GitHub Pages).
-2) Apri il link con Safari sull'iPad, con una connessione Internet la prima volta.
-3) Seleziona Condividi > Aggiungi alla schermata Home.
-4) Apri l'app dalla schermata Home e importa un PDF o acquisisci fotografie.
+Novità: Rileva parti, menu degli strumenti rilevati, ricerca OCR delle intestazioni scannerizzate.
+L’OCR scarica Tesseract e il modello inglese alla prima analisi; potrebbe richiedere parecchio tempo su PDF molto lunghi.
+Il raggruppamento delle pagine si basa sulle intestazioni: non è garantito su tutti i layout, verifica sempre l’anteprima.
 
-LIMITI ATTUALI
-- Le librerie pdf-lib, pdf.js e JSZip vengono scaricate via CDN alla prima apertura.
-- Le anteprime PDF richiedono il caricamento iniziale di pdf.js; se offline prima del caricamento non saranno disponibili.
-- Il comando «Rileva pagine tuba» cerca il testo estraibile dei PDF. Non effettua OCR sulle pagine scannerizzate e non garantisce il riconoscimento di tutte le pagine consecutive. Verificare manualmente.
-- I file importati in blocco vengono aggiunti all'archivio; la selezione delle pagine è disponibile quando si importa un singolo PDF. Migliorabile in seguito.
-- «Apri» usa il menu Condividi di iPadOS: per Piascore bisogna scegliere l'app dal menu. Apertura automatica non garantita.
-- Backup e ripristino richiedono JSZip caricato almeno una volta.
-- Il ritaglio prospettico usa un'omografia con campionamento nearest-neighbor; per spartiti molto piccoli può perdere definizione.
-- Non è stata ancora verificata con test sul dispositivo iPad specifico.
-
-PRIVACY
-I file delle partiture vengono conservati in IndexedDB sul dispositivo. Nessun PDF è inviato al server per essere elaborato. Il servizio di hosting e le CDN ricevono normali richieste per scaricare il codice JavaScript.
-
-LICENZE LIBRERIE
-pdf-lib: MIT; PDF.js: Apache 2.0; JSZip: MIT/GPLv3. Le librerie sono richiamate da CDN e non incluse fisicamente nel pacchetto.
+I dati in IndexedDB rimangono nello stesso dominio e non vengono modificati dall’aggiornamento, ma è opportuno fare un backup prima.

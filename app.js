@@ -16,7 +16,7 @@ const id=()=>crypto.randomUUID?.()||('id-'+Date.now()+'-'+Math.random());
 function show(view){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('active',e.id===view));window.scrollTo(0,0)}
 function download(blob,name){const a=document.createElement('a'),u=URL.createObjectURL(blob);a.href=u;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function renderLibrary(){const all=(await getAll()).sort((a,b)=>b.created-a.created);libraryCache=new Map(all.map(a=>[a.id,a]));const q=$('#search').value.toLocaleLowerCase('it');const matched=all.filter(a=>a.title.toLocaleLowerCase('it').includes(q));$('#count').textContent=all.length;$('#library').innerHTML=matched.length?matched.map(a=>`<div class="item"><div class="docIcon">♬</div><div class="details"><b>${esc(a.title)}</b><small>${a.pages||'?'} ${a.pages===1?'pagina':'pagine'} · ${a.source==='scan'?'Scansione':a.source==='extract'?'Estratto PDF':'PDF importato'}</small></div><div class="itembuttons"><button class="open" data-op="open" data-id="${a.id}">Condividi ↗</button><button data-op="download" data-id="${a.id}" title="Esporta il PDF in File">Salva PDF</button>${a.source==='import'?`<button title="Estrai pagine" data-op="extract" data-id="${a.id}">Estrai</button>`:''}<button title="Rinomina" data-op="rename" data-id="${a.id}">✎</button><button class="delete" title="Elimina" data-op="delete" data-id="${a.id}">×</button></div></div>`).join(''):'<div class="empty">Nessuna partitura. Importa un PDF oppure scatta una foto per iniziare.</div>'}
+async function renderLibrary(){const all=(await getAll()).sort((a,b)=>b.created-a.created);libraryCache=new Map(all.map(a=>[a.id,a]));const q=$('#search').value.toLocaleLowerCase('it');const matched=all.filter(a=>a.title.toLocaleLowerCase('it').includes(q));$('#count').textContent=all.length;$('#library').innerHTML=matched.length?matched.map(a=>`<div class="item"><div class="docIcon">♬</div><div class="details"><b>${esc(a.title)}</b><small>${a.pages||'?'} ${a.pages===1?'pagina':'pagine'} · ${a.source==='scan'?'Scansione':a.source==='extract'?'Estratto PDF':'PDF importato'}</small></div><div class="itembuttons"><button class="open" data-op="open" data-id="${a.id}">Condividi ↗</button><button data-op="preview" data-id="${a.id}" title="Apri il PDF nel visualizzatore">Visualizza PDF</button><button data-op="download" data-id="${a.id}" title="Esporta il PDF in File">Salva PDF</button>${a.source==='import'?`<button title="Estrai pagine" data-op="extract" data-id="${a.id}">Estrai</button>`:''}<button title="Rinomina" data-op="rename" data-id="${a.id}">✎</button><button class="delete" title="Elimina" data-op="delete" data-id="${a.id}">×</button></div></div>`).join(''):'<div class="empty">Nessuna partitura. Importa un PDF oppure scatta una foto per iniziare.</div>'}
 function shareRecord(a){
   const file=new File([a.blob],clean(a.title)+'.pdf',{type:'application/pdf'});
   const mode=$('#openMode').value;
@@ -30,21 +30,35 @@ function shareRecord(a){
   // altrimenti può rifiutare di mostrare il foglio di condivisione.
   if(typeof navigator.share==='function' && (!navigator.canShare || navigator.canShare({files:[file]}))){
     try{
-      const sharing=navigator.share({files:[file],title:a.title});
+      const sharing=navigator.share({files:[file]});
       sharing.catch(err=>{
         if(err.name==='AbortError')return;
-        toast('Condivisione non riuscita: usa Salva PDF e aprilo dall’app File.');
+        toast('Condivisione non riuscita: usa Visualizza PDF oppure Salva PDF.');
       });
     }catch(err){toast('Condivisione non disponibile: premi Salva PDF.');}
   }else{
     toast('Questo browser non consente la condivisione PDF: premi Salva PDF.');
   }
 }
+// Visualizzazione del PDF attraverso il visualizzatore PDF del browser, senza Web Share API.
+// Il collegamento Blob nasce direttamente dal tap: utile su iPad quando le app PDF
+// non figurano nel foglio di condivisione della PWA.
+let activePreviewURL=null;
+function previewRecord(a){
+  const url=URL.createObjectURL(new Blob([a.blob],{type:'application/pdf'}));
+  const link=document.createElement('a');
+  link.href=url; link.target='_blank'; link.rel='noopener';
+  document.body.append(link);link.click();link.remove();
+  if(activePreviewURL)URL.revokeObjectURL(activePreviewURL);
+  activePreviewURL=url;
+  toast('PDF aperto: usa Condividi nel visualizzatore. Se non si apre, scegli Salva PDF.');
+}
 $('#library').addEventListener('click',async e=>{
  const b=e.target.closest('[data-op]');if(!b)return;
  // Il record è già in memoria dopo il rendering: nessun await per Apri.
  const a=libraryCache.get(b.dataset.id);if(!a)return;
  if(b.dataset.op==='open'){shareRecord(a);return}
+ if(b.dataset.op==='preview'){previewRecord(a);return}
  if(b.dataset.op==='download'){download(a.blob,clean(a.title)+'.pdf');return}
  if(b.dataset.op==='rename'){const v=prompt('Nuovo titolo',a.title);if(v?.trim()){a.title=v.trim();await saveRecord(a);renderLibrary()}}
  else if(b.dataset.op==='extract'){await openExtraction(new File([a.blob],clean(a.title)+'.pdf',{type:'application/pdf'}))}
@@ -120,3 +134,62 @@ async function jpegFromData(data,filter){const img=await readImage(data),c=docum
 $('#saveScan').onclick=async()=>{if(!scanItems.length){toast('Aggiungi almeno una foto');return}try{const lib=await library('lib');if(!lib)throw Error('Libreria PDF non disponibile alla prima apertura offline');const doc=await lib.PDFDocument.create();for(const item of scanItems){const bytes=await jpegFromData(item.data,$('#scanFilter').value),img=await doc.embedJpg(bytes),size=img.scale(1),page=doc.addPage([size.width,size.height]);page.drawImage(img,{x:0,y:0,width:size.width,height:size.height})}const blob=new Blob([await doc.save()],{type:'application/pdf'});await saveRecord({id:id(),title:$('#scanTitle').value.trim()||'Partitura fotografata',pages:scanItems.length,source:'scan',blob,created:Date.now()});scanItems=[];renderLibrary();show('home');toast('PDF salvato nell’archivio')}catch(e){toast(e.message)}};
 $('#backup').onclick=async()=>{try{const all=await getAll(),zip=await library('zip');if(!zip)throw Error('Modulo backup non caricato');const z=new zip(),metadata=[];for(let i=0;i<all.length;i++){let a=all[i],file=`documenti/${i+1}-${clean(a.title)}.pdf`;z.file(file,a.blob);metadata.push({id:a.id,title:a.title,pages:a.pages,source:a.source,created:a.created,file})}z.file('archivio.json',JSON.stringify({version:1,scores:metadata},null,2));download(await z.generateAsync({type:'blob',compression:'DEFLATE'}),'PartituraPocket-backup.zip');toast('Backup creato')}catch(e){toast(e.message)}};$('#restore').onclick=()=>$('#restoreInput').click();$('#restoreInput').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const zip=await library('zip');if(!zip)throw Error('Modulo ZIP non disponibile');const z=await zip.loadAsync(f),manifest=JSON.parse(await z.file('archivio.json').async('string'));if(!Array.isArray(manifest.scores))throw Error('Backup non valido');if(!confirm(`Importare ${manifest.scores.length} partiture? I documenti esistenti saranno mantenuti.`))return;for(let a of manifest.scores){let entry=z.file(a.file);if(!entry)continue;let buffer=await entry.async('arraybuffer');await saveRecord({...a,id:id(),blob:new Blob([buffer],{type:'application/pdf'})})}toast('Backup ripristinato');renderLibrary()}catch(err){toast('Ripristino non riuscito: '+err.message)}};
 renderLibrary().catch(e=>toast('Archivio non disponibile: '+e.message));if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+
+
+// Aggiornamenti PWA: la versione remota arriva dal file version.json non cacheato.
+const APP_VERSION='0.2.3';
+let remoteVersion=null;
+const updateButton=$('#checkUpdates'), applyButton=$('#applyUpdate'), updateStatus=$('#updateStatus');
+function compareVersions(left,right){
+  const x=left.split('.').map(Number),y=right.split('.').map(Number);
+  for(let i=0;i<Math.max(x.length,y.length);i++){
+    if((x[i]||0)!==(y[i]||0))return (x[i]||0)-(y[i]||0);
+  }
+  return 0;
+}
+updateButton?.addEventListener('click',async()=>{
+  updateButton.disabled=true;
+  applyButton.hidden=true;
+  updateStatus.textContent='Controllo aggiornamenti in corso…';
+  try{
+    if(!navigator.onLine)throw Error('Sei offline: serve una connessione Internet per controllare GitHub Pages.');
+    const response=await fetch('./version.json?check='+Date.now(),{cache:'no-store'});
+    if(!response.ok)throw Error('Impossibile leggere la versione pubblicata ('+response.status+').');
+    const data=await response.json();
+    if(!/^\d+\.\d+\.\d+$/.test(data.version))throw Error('Versione remota non valida.');
+    remoteVersion=data.version;
+    if(compareVersions(remoteVersion,APP_VERSION)>0){
+      updateStatus.textContent='Disponibile la versione '+remoteVersion+' (installata '+APP_VERSION+'). Tocca «Installa aggiornamento».';
+      applyButton.hidden=false;
+    }else if(compareVersions(remoteVersion,APP_VERSION)<0){
+      updateStatus.textContent='Il sito pubblicato ha una versione precedente ('+remoteVersion+'). Attendi che GitHub Pages completi la pubblicazione.';
+    }else{
+      updateStatus.textContent='Partitura Pocket '+APP_VERSION+' è già aggiornato.';
+    }
+  }catch(err){updateStatus.textContent='Controllo non riuscito: '+err.message}
+  finally{updateButton.disabled=false;}
+});
+applyButton?.addEventListener('click',async()=>{
+  if(!remoteVersion || compareVersions(remoteVersion,APP_VERSION)<=0)return;
+  applyButton.disabled=true;
+  updateStatus.textContent='Installazione in corso… non chiudere l’app.';
+  try{
+    // Il Service Worker nuovo pulisce soltanto le vecchie cache dell'interfaccia.
+    if('serviceWorker' in navigator){
+      const registration=await navigator.serviceWorker.getRegistration();
+      if(registration){
+        await registration.update();
+        if(registration.waiting)registration.waiting.postMessage({type:'SKIP_WAITING'});
+      }
+    }
+    // Ricarica con un URL univoco: anche un SW precedente cache-first non intercetta
+    // la copia cacheata di index.html con questo parametro.
+    const url=new URL('./',location.href);
+    url.searchParams.set('v',remoteVersion);
+    url.searchParams.set('update',Date.now().toString());
+    location.replace(url.href);
+  }catch(err){
+    updateStatus.textContent='Aggiornamento non riuscito: '+err.message;
+    applyButton.disabled=false;
+  }
+});
